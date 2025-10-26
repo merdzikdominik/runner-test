@@ -1,9 +1,9 @@
 name: Hello CI (Windows self-hosted)
 
 on:
-  workflow_dispatch:      # ręczne uruchomienie z Actions
+  workflow_dispatch:
   push:
-    branches: [ main ]    # automatycznie przy pushu na main (zmień, jeśli masz inną gałąź)
+    branches: [ master ]
 
 jobs:
   hello:
@@ -23,3 +23,4 @@ jobs:
       - name: Hello
         shell: pwsh
         run: Write-Host "Hello from my self-hosted Windows runner 👋"
+
