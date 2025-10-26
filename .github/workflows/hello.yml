@@ -1,0 +1,25 @@
+name: Hello CI (Windows self-hosted)
+
+on:
+  workflow_dispatch:      # ręczne uruchomienie z Actions
+  push:
+    branches: [ main ]    # automatycznie przy pushu na main (zmień, jeśli masz inną gałąź)
+
+jobs:
+  hello:
+    runs-on: [self-hosted, windows, vm]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Info o maszynie
+        shell: pwsh
+        run: |
+          Write-Host "Runner: $env:COMPUTERNAME"
+          Write-Host "User:   $env:USERNAME"
+          Write-Host "Dir:    $(Get-Location)"
+
+      - name: Hello
+        shell: pwsh
+        run: Write-Host "Hello from my self-hosted Windows runner 👋"
