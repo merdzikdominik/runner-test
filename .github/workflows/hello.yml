@@ -7,7 +7,7 @@ on:
 
 jobs:
   hello:
-    runs-on: [self-hosted, windows, vm]
+    runs-on: self-hosted
 
     steps:
       - name: Checkout repo
@@ -23,4 +23,5 @@ jobs:
       - name: Hello
         shell: pwsh
         run: Write-Host "Hello from my self-hosted Windows runner 👋"
+
 
