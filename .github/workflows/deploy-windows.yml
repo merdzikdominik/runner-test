@@ -28,10 +28,11 @@ jobs:
         working-directory: ansible
         env:
           ANSIBLE_VAULT_PASSWORD_FILE: .vault
-        run: ~/.local/bin/ansible -i inventory.ini win -m ansible.windows.win_ping -v
+        run: ~/.local/bin/ansible -i inventory.ini win -m ansible.windows.win_ping -v -e "win_pass=${{ secrets.WIN_PASS }}"
 
       - name: Deploy (winget)
         working-directory: ansible
         env:
           ANSIBLE_VAULT_PASSWORD_FILE: .vault
         run: ~/.local/bin/ansible-playbook site.yml -v
+
