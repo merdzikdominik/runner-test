@@ -34,5 +34,6 @@ jobs:
         working-directory: ansible
         env:
           ANSIBLE_VAULT_PASSWORD_FILE: .vault
-        run: ~/.local/bin/ansible-playbook site.yml -v
+        run: ~/.local/bin/ansible-playbook site.yml -v -e "win_pass=${{ secrets.WIN_PASS }}"
+
 
