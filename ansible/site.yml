@@ -1,0 +1,28 @@
+- name: Deploy aplikacji na Windows przez winget
+  hosts: win
+  gather_facts: no
+
+  pre_tasks:
+    - name: Upewnij się, że WinGet jest dostępny
+      community.windows.win_winget:
+        list: true
+      register: winget_check
+      failed_when: false
+
+    - name: Podpowiedź jeśli winget niedostępny
+      ansible.builtin.debug:
+        msg: >
+          Winget nie jest dostępny (brak App Installer / stary Windows). 
+          Zainstaluj "App Installer" ze Sklepu Microsoft lub użyj Chocolatey.
+      when: winget_check is failed
+
+  tasks:
+    - name: Install via winget (Notepad++)
+      community.windows.win_winget:
+        id: Notepad++.Notepad++
+        state: present
+
+    - name: Install Chrome
+      community.windows.win_winget:
+        id: Google.Chrome
+        state: present
