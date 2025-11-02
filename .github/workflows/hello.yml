@@ -21,8 +21,9 @@ jobs:
           Write-Host "Dir:    $(Get-Location)"
 
       - name: Hello
-        shell: pwsh
+        shell: powershell
         run: Write-Host "Hello from my self-hosted Windows runner 👋"
+
 
 
 
