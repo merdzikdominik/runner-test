@@ -1,39 +1,49 @@
-name: Deploy Windows apps (winget)
+name: Deploy Windows apps (winget) — Variant A (self-hosted Windows)
 
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows]
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Install Ansible + collections
+      - name: Wstępny test łączności z VM (WinRM 5985)
+        shell: powershell
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip
-          python3 -m pip install --user 'ansible-core==2.17.*' 'pywinrm>=0.4.3' 'pywinrm[credssp]'
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          ~/.local/bin/ansible-galaxy collection install -r ansible/requirements.yml
+          Test-NetConnection -ComputerName 192.168.0.138 -Port 5985 | Format-List -Property ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
 
-      - name: Vault password file
-        run: |
-          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ansible/.vault
-          chmod 600 ansible/.vault
-        env:
-          ANSIBLE_VAULT_PASSWORD_FILE: ansible/.vault
+      - name: Run Ansible in Linux container (Docker Desktop)
+        uses: addnab/docker-run-action@v3
+        with:
+          image: ghcr.io/coderanger/ansible:latest
+          options: -v ${{ github.workspace }}:/work -w /work
+          run: |
+            set -e
+            cd ansible
 
-      - name: Test połączenia (win_ping)
-        working-directory: ansible
-        env:
-          ANSIBLE_VAULT_PASSWORD_FILE: .vault
-        run: ~/.local/bin/ansible -i inventory.ini win -m ansible.windows.win_ping -v -e "win_pass=${{ secrets.WIN_PASS }}"
+            # (opcjonalnie) doinstaluj kolekcje
+            if [ -f requirements.yml ]; then
+              ansible-galaxy collection install -r requirements.yml
+            fi
 
-      - name: Deploy (winget)
-        working-directory: ansible
-        env:
-          ANSIBLE_VAULT_PASSWORD_FILE: .vault
-        run: ~/.local/bin/ansible-playbook site.yml -v -e "win_pass=${{ secrets.WIN_PASS }}"
+            # Vault (jeśli używasz) – wstrzykujemy hasło do pliku
+            if [ -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" ]; then
+              echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault
+              chmod 600 .vault
+              export ANSIBLE_VAULT_PASSWORD_FILE=.vault
+            fi
 
+            echo "== Ansible version =="
+            ansible --version
 
+            echo "== WinRM ping =="
+            ansible -i inventory.ini win -m ansible.windows.win_ping -v \
+              -e "win_pass=${{ secrets.WIN_PASS }}"
+
+            echo "== Playbook deploy (winget) =="
+            ansible-playbook -i inventory.ini site.yml -v \
+              -e "win_pass=${{ secrets.WIN_PASS }}"
