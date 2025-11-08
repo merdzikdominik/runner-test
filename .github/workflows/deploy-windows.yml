@@ -67,7 +67,7 @@ jobs:
       - name: WinRM check
         shell: powershell
         run: |
-          Test-NetConnection -ComputerName 192.168.1.31 -Port 5985 |
+          Test-NetConnection -ComputerName 192.168.1.139 -Port 5985 |
             Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
 
       # --- Test ping przez moduł WinRM ---
@@ -105,3 +105,4 @@ jobs:
             fi
             ansible-playbook -i inventory.ini site.yml -v -e win_pass=\"\$WIN_PASS\"
           "
+
