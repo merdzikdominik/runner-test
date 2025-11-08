@@ -6,7 +6,7 @@ on:
 jobs:
   deploy:
     # Twój self-hosted runner na Windows
-    runs-on: [self-hosted, windows]   # dopasuj do swoich labeli (np. homelab, x64)
+    runs-on: [self-hosted, Windows]   # dopasuj do swoich labeli (np. homelab, x64)
 
     steps:
       - name: Checkout
@@ -86,3 +86,4 @@ jobs:
             fi
             ansible-playbook -i inventory.ini site.yml -v -e win_pass=\"\$WIN_PASS\"
           "
+
