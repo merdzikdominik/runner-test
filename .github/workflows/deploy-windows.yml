@@ -5,31 +5,40 @@ on:
 
 jobs:
   deploy:
-    # Twój self-hosted runner na Windows
-    runs-on: [self-hosted, Windows]   # dopasuj do swoich labeli (np. homelab, x64)
+    # Twój self-hosted runner na Windowsie (te same etykiety co runner)
+    runs-on: [self-hosted, Windows]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check connectivity (WinRM)
+      # --- WSL/Ubuntu setup (jednorazowo; po pierwszym uruchomieniu WSL może wymagać rebootu hosta) ---
+      - name: Włącz funkcje WSL (jeśli brak)
         shell: powershell
         run: |
-          Test-NetConnection -ComputerName 192.168.0.138 -Port 5985 |
-            Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
-
-      - name: Sprawdź / doinstaluj WSL + Ubuntu-22.04 (może wymagać ręcznego rebootu raz)
-        shell: powershell
-        run: |
-          wsl --status
-          if (-not (wsl -l -q | Select-String -SimpleMatch "Ubuntu-22.04")) {
-            Write-Host "Installing Ubuntu-22.04 in WSL..."
-            wsl --install -d Ubuntu-22.04
+          $features = (dism.exe /online /Get-Features /Format:Table)
+          if ($features -notmatch "Microsoft-Windows-Subsystem-Linux\s+Enabled") {
+            dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
           }
-          # Inicjalizacja dystrybucji (tworzy usera przy pierwszym uruchomieniu)
+          if ($features -notmatch "VirtualMachinePlatform\s+Enabled") {
+            dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+          }
+          wsl --set-default-version 2
+          wsl --status
+
+      - name: Zainstaluj/upewnij się, że jest Ubuntu-22.04 w WSL
+        shell: powershell
+        run: |
+          if (-not (wsl -l -q | Select-String -SimpleMatch "Ubuntu-22.04")) {
+            Write-Host "Installing Ubuntu-22.04..."
+            wsl --install -d Ubuntu-22.04
+            Write-Warning "Jeśli to pierwsza instalacja WSL/Ubuntu, może być wymagany reboot hosta. Uruchom ponownie maszynę i odpal workflow jeszcze raz."
+          }
+          # Pierwsze odpalenie, żeby dokończyć inicjalizację dystrybucji
           wsl -d Ubuntu-22.04 -- bash -lc "echo 'WSL ready'"
 
-      - name: Wyznacz ścieżkę roboczą w WSL (z GITHUB_WORKSPACE)
+      # --- Wyznacz ścieżkę roboczą w WSL ---
+      - name: Ustal WSL_WORKDIR (mapowanie GITHUB_WORKSPACE)
         shell: powershell
         run: |
           $p = $env:GITHUB_WORKSPACE
@@ -39,7 +48,8 @@ jobs:
           "WSL_WORKDIR=$wsl" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "WSL_WORKDIR=$wsl"
 
-      - name: Zainstaluj Ansible w WSL + kolekcje
+      # --- Ansible w WSL ---
+      - name: Zainstaluj Ansible + kolekcje w WSL
         shell: powershell
         run: |
           wsl -d Ubuntu-22.04 -- bash -lc "
@@ -53,10 +63,18 @@ jobs:
             fi
           "
 
+      # --- Diagnoza sieci do VM ---
+      - name: WinRM check
+        shell: powershell
+        run: |
+          Test-NetConnection -ComputerName 192.168.1.31 -Port 5985 |
+            Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
+
+      # --- Test ping przez moduł WinRM ---
       - name: Test połączenia (ansible.windows.win_ping)
         shell: powershell
         env:
-          WIN_PASS: ${{ secrets.WIN_PASS }}                      # hasło do VM
+          WIN_PASS: ${{ secrets.WIN_PASS }}                         # hasło Administratora do VM
           ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }} # opcjonalnie
         run: |
           wsl -d Ubuntu-22.04 -- bash -lc "
@@ -70,6 +88,7 @@ jobs:
             ansible -i inventory.ini win -m ansible.windows.win_ping -v -e win_pass=\"\$WIN_PASS\"
           "
 
+      # --- Właściwy deploy (winget) ---
       - name: Deploy apps
         shell: powershell
         env:
@@ -86,4 +105,3 @@ jobs:
             fi
             ansible-playbook -i inventory.ini site.yml -v -e win_pass=\"\$WIN_PASS\"
           "
-
