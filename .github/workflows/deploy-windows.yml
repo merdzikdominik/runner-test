@@ -1,49 +1,88 @@
-name: Deploy Windows apps (winget) — Variant A (self-hosted Windows)
+name: Deploy Windows apps (winget) — WSL
 
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, Windows]
+    # Twój self-hosted runner na Windows
+    runs-on: [self-hosted, windows]   # dopasuj do swoich labeli (np. homelab, x64)
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Wstępny test łączności z VM (WinRM 5985)
+      - name: Check connectivity (WinRM)
         shell: powershell
         run: |
-          Test-NetConnection -ComputerName 192.168.0.138 -Port 5985 | Format-List -Property ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
+          Test-NetConnection -ComputerName 192.168.0.138 -Port 5985 |
+            Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
 
-      - name: Run Ansible in Linux container (Docker Desktop)
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ghcr.io/coderanger/ansible:latest
-          options: -v ${{ github.workspace }}:/work -w /work
-          run: |
+      - name: Sprawdź / doinstaluj WSL + Ubuntu-22.04 (może wymagać ręcznego rebootu raz)
+        shell: powershell
+        run: |
+          wsl --status
+          if (-not (wsl -l -q | Select-String -SimpleMatch "Ubuntu-22.04")) {
+            Write-Host "Installing Ubuntu-22.04 in WSL..."
+            wsl --install -d Ubuntu-22.04
+          }
+          # Inicjalizacja dystrybucji (tworzy usera przy pierwszym uruchomieniu)
+          wsl -d Ubuntu-22.04 -- bash -lc "echo 'WSL ready'"
+
+      - name: Wyznacz ścieżkę roboczą w WSL (z GITHUB_WORKSPACE)
+        shell: powershell
+        run: |
+          $p = $env:GITHUB_WORKSPACE
+          $drive = $p.Substring(0,1).ToLower()
+          $rest  = $p.Substring(2).Replace('\','/')
+          $wsl   = "/mnt/$drive/$rest"
+          "WSL_WORKDIR=$wsl" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "WSL_WORKDIR=$wsl"
+
+      - name: Zainstaluj Ansible w WSL + kolekcje
+        shell: powershell
+        run: |
+          wsl -d Ubuntu-22.04 -- bash -lc "
             set -e
-            cd ansible
-
-            # (opcjonalnie) doinstaluj kolekcje
-            if [ -f requirements.yml ]; then
-              ansible-galaxy collection install -r requirements.yml
+            sudo apt-get update
+            sudo apt-get install -y python3-pip
+            python3 -m pip install --user 'ansible-core==2.17.*' 'pywinrm>=0.4.3' 'pywinrm[credssp]'
+            export PATH=\$HOME/.local/bin:\$PATH
+            if [ -f \"$env:WSL_WORKDIR/ansible/requirements.yml\" ]; then
+              ansible-galaxy collection install -r \"$env:WSL_WORKDIR/ansible/requirements.yml\"
             fi
+          "
 
-            # Vault (jeśli używasz) – wstrzykujemy hasło do pliku
-            if [ -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" ]; then
-              echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault
-              chmod 600 .vault
+      - name: Test połączenia (ansible.windows.win_ping)
+        shell: powershell
+        env:
+          WIN_PASS: ${{ secrets.WIN_PASS }}                      # hasło do VM
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }} # opcjonalnie
+        run: |
+          wsl -d Ubuntu-22.04 -- bash -lc "
+            set -e
+            export PATH=\$HOME/.local/bin:\$PATH
+            cd \"$env:WSL_WORKDIR/ansible\"
+            if [ -n \"\$ANSIBLE_VAULT_PASSWORD\" ]; then
+              echo \"\$ANSIBLE_VAULT_PASSWORD\" > .vault && chmod 600 .vault
               export ANSIBLE_VAULT_PASSWORD_FILE=.vault
             fi
+            ansible -i inventory.ini win -m ansible.windows.win_ping -v -e win_pass=\"\$WIN_PASS\"
+          "
 
-            echo "== Ansible version =="
-            ansible --version
-
-            echo "== WinRM ping =="
-            ansible -i inventory.ini win -m ansible.windows.win_ping -v \
-              -e "win_pass=${{ secrets.WIN_PASS }}"
-
-            echo "== Playbook deploy (winget) =="
-            ansible-playbook -i inventory.ini site.yml -v \
-              -e "win_pass=${{ secrets.WIN_PASS }}"
+      - name: Deploy apps
+        shell: powershell
+        env:
+          WIN_PASS: ${{ secrets.WIN_PASS }}
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          wsl -d Ubuntu-22.04 -- bash -lc "
+            set -e
+            export PATH=\$HOME/.local/bin:\$PATH
+            cd \"$env:WSL_WORKDIR/ansible\"
+            if [ -n \"\$ANSIBLE_VAULT_PASSWORD\" ]; then
+              echo \"\$ANSIBLE_VAULT_PASSWORD\" > .vault && chmod 600 .vault
+              export ANSIBLE_VAULT_PASSWORD_FILE=.vault
+            fi
+            ansible-playbook -i inventory.ini site.yml -v -e win_pass=\"\$WIN_PASS\"
+          "
