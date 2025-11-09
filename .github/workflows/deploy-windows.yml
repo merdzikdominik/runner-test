@@ -16,6 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check secrets
+        shell: powershell
+        run: |
+          Write-Host "host: ${{ secrets.WIN_HOST }}"
+          Write-Host "user: ${{ secrets.WIN_USER }}"
+          Write-Host "pass: ${{ secrets.WIN_PASS }}"
+          Write-Host "apps: ${{ github.event.inputs.apps }}"
+
       - name: Check TCP to WinRM (5985)
         shell: powershell
         run: |
@@ -101,3 +109,4 @@ jobs:
           }
       
           Invoke-Command @invokeParams
+
