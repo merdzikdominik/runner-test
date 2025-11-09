@@ -28,9 +28,9 @@ jobs:
       - name: Deploy na VM przez WinRM (winget -> choco fallback)
         shell: powershell
         env:
-          WIN_HOST: ${{ secrets.WIN_HOST }}         # np. 192.168.0.138
-          WIN_USER: ${{ secrets.WIN_USER }}         # np. .\Administrator
-          WIN_PASS: ${{ secrets.WIN_PASS }}         # hasło do powyższego konta
+          WIN_HOST: ${{ secrets.WIN_HOST }}
+          WIN_USER: ${{ secrets.WIN_USER }}
+          WIN_PASS: ${{ secrets.WIN_PASS }}
           INPUT_APPS: ${{ github.event.inputs.apps }}
         run: |
           $sec  = ConvertTo-SecureString $env:WIN_PASS -AsPlainText -Force
@@ -97,3 +97,4 @@ jobs:
                          -SessionOption $opt `
                          -ScriptBlock $script `
                          -ArgumentList (, $apps)
+
