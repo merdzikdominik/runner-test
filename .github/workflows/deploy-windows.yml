@@ -11,7 +11,7 @@ on:
 jobs:
   deploy:
     # Uruchamiaj na swoim self-hosted Windows runnerze w tym samym LAN co VM
-    runs-on: [self-hosted, windows]
+    runs-on: [self-hosted, Windows]
 
     steps:
       - name: Checkout
@@ -84,3 +84,4 @@ jobs:
       
             Write-Host "Deployment zakończony."
           }
+
