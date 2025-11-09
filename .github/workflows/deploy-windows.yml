@@ -1,109 +1,99 @@
-name: Deploy Windows apps (winget) — WSL
+name: Deploy Windows apps — PowerShell Remoting (no WSL/Docker)
 
 on:
   workflow_dispatch:
+    inputs:
+      apps:
+        description: "Winget IDs do zainstalowania (comma-separated)"
+        required: false
+        default: "Notepad++.Notepad++,Google.Chrome"
 
 jobs:
   deploy:
-    # Twój self-hosted runner na Windowsie (te same etykiety co runner)
-    runs-on: [self-hosted, Windows]
+    # Uruchamiaj na swoim self-hosted Windows runnerze w tym samym LAN co VM
+    runs-on: [self-hosted, windows]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- WSL/Ubuntu setup (jednorazowo; po pierwszym uruchomieniu WSL może wymagać rebootu hosta) ---
-      - name: Włącz funkcje WSL (jeśli brak)
+      - name: check TCP connectivity
         shell: powershell
         run: |
-          $features = (dism.exe /online /Get-Features /Format:Table)
-          if ($features -notmatch "Microsoft-Windows-Subsystem-Linux\s+Enabled") {
-            dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-          }
-          if ($features -notmatch "VirtualMachinePlatform\s+Enabled") {
-            dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-          }
-          wsl --set-default-version 2
-          wsl --status
+          $ip = "${{ secrets.WIN_HOST }}"
+          $t = Test-NetConnection -ComputerName $ip -Port 5985
+          $t | Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
+          if (-not $t.TcpTestSucceeded) { throw "Brak łączności do $ip:5985" }
 
-      - name: Zainstaluj/upewnij się, że jest Ubuntu-22.04 w WSL
-        shell: powershell
-        run: |
-          if (-not (wsl -l -q | Select-String -SimpleMatch "Ubuntu-22.04")) {
-            Write-Host "Installing Ubuntu-22.04..."
-            wsl --install -d Ubuntu-22.04
-            Write-Warning "Jeśli to pierwsza instalacja WSL/Ubuntu, może być wymagany reboot hosta. Uruchom ponownie maszynę i odpal workflow jeszcze raz."
-          }
-          # Pierwsze odpalenie, żeby dokończyć inicjalizację dystrybucji
-          wsl -d Ubuntu-22.04 -- bash -lc "echo 'WSL ready'"
-
-      # --- Wyznacz ścieżkę roboczą w WSL ---
-      - name: Ustal WSL_WORKDIR (mapowanie GITHUB_WORKSPACE)
-        shell: powershell
-        run: |
-          $p = $env:GITHUB_WORKSPACE
-          $drive = $p.Substring(0,1).ToLower()
-          $rest  = $p.Substring(2).Replace('\','/')
-          $wsl   = "/mnt/$drive/$rest"
-          "WSL_WORKDIR=$wsl" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "WSL_WORKDIR=$wsl"
-
-      # --- Ansible w WSL ---
-      - name: Zainstaluj Ansible + kolekcje w WSL
-        shell: powershell
-        run: |
-          wsl -d Ubuntu-22.04 -- bash -lc "
-            set -e
-            sudo apt-get update
-            sudo apt-get install -y python3-pip
-            python3 -m pip install --user 'ansible-core==2.17.*' 'pywinrm>=0.4.3' 'pywinrm[credssp]'
-            export PATH=\$HOME/.local/bin:\$PATH
-            if [ -f \"$env:WSL_WORKDIR/ansible/requirements.yml\" ]; then
-              ansible-galaxy collection install -r \"$env:WSL_WORKDIR/ansible/requirements.yml\"
-            fi
-          "
-
-      # --- Diagnoza sieci do VM ---
-      - name: WinRM check
-        shell: powershell
-        run: |
-          Test-NetConnection -ComputerName 192.168.0.31 -Port 5985 |
-            Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
-
-      # --- Test ping przez moduł WinRM ---
-      - name: Test połączenia (ansible.windows.win_ping)
+      - name: Deploy na VM przez WinRM (winget -> choco fallback)
         shell: powershell
         env:
-          WIN_PASS: ${{ secrets.WIN_PASS }}                         # hasło Administratora do VM
-          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }} # opcjonalnie
+          WIN_HOST: ${{ secrets.WIN_HOST }}         # np. 192.168.0.138
+          WIN_USER: ${{ secrets.WIN_USER }}         # np. .\Administrator
+          WIN_PASS: ${{ secrets.WIN_PASS }}         # hasło do powyższego konta
+          INPUT_APPS: ${{ github.event.inputs.apps }}
         run: |
-          wsl -d Ubuntu-22.04 -- bash -lc "
-            set -e
-            export PATH=\$HOME/.local/bin:\$PATH
-            cd \"$env:WSL_WORKDIR/ansible\"
-            if [ -n \"\$ANSIBLE_VAULT_PASSWORD\" ]; then
-              echo \"\$ANSIBLE_VAULT_PASSWORD\" > .vault && chmod 600 .vault
-              export ANSIBLE_VAULT_PASSWORD_FILE=.vault
-            fi
-            ansible -i inventory.ini win -m ansible.windows.win_ping -v -e win_pass=\"\$WIN_PASS\"
-          "
+          $sec  = ConvertTo-SecureString $env:WIN_PASS -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential ($env:WIN_USER, $sec)
+          $opt  = New-PSSessionOption -SkipCACheck -SkipCNCheck -OperationTimeout 180000
 
-      # --- Właściwy deploy (winget) ---
-      - name: Deploy apps
-        shell: powershell
-        env:
-          WIN_PASS: ${{ secrets.WIN_PASS }}
-          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
-        run: |
-          wsl -d Ubuntu-22.04 -- bash -lc "
-            set -e
-            export PATH=\$HOME/.local/bin:\$PATH
-            cd \"$env:WSL_WORKDIR/ansible\"
-            if [ -n \"\$ANSIBLE_VAULT_PASSWORD\" ]; then
-              echo \"\$ANSIBLE_VAULT_PASSWORD\" > .vault && chmod 600 .vault
-              export ANSIBLE_VAULT_PASSWORD_FILE=.vault
-            fi
-            ansible-playbook -i inventory.ini site.yml -v -e win_pass=\"\$WIN_PASS\"
-          "
+          # listę aplikacji bierzemy z inputs (CSV) albo domyślną
+          $apps = if ([string]::IsNullOrWhiteSpace($env:INPUT_APPS)) {
+            @('Notepad++.Notepad++','Google.Chrome')
+          } else {
+            $env:INPUT_APPS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          }
 
+          $script = {
+            param([string[]]$Packages)
 
+            $ErrorActionPreference = 'Stop'
+
+            function Has-Winget { Get-Command winget -ErrorAction SilentlyContinue }
+
+            function Install-WithWinget([string[]]$Pkgs) {
+              foreach ($p in $Pkgs) {
+                Write-Host "Winget: installing $p"
+                winget install --id $p --silent `
+                  --accept-source-agreements --accept-package-agreements --disable-interactivity
+              }
+            }
+
+            if (Has-Winget) {
+              Write-Host "Winget wykryty – instaluję paczki..."
+              Install-WithWinget -Pkgs $Packages
+            } else {
+              Write-Warning "Winget niedostępny – przełączam się na Chocolatey"
+              if (-not (Test-Path "$env:ProgramData\chocolatey\choco.exe")) {
+                Write-Host "Instaluję Chocolatey..."
+                Set-ExecutionPolicy Bypass -Scope Process -Force
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+              }
+
+              # Mapowanie popularnych winget-ID -> nazwy choco
+              $map = @{
+                'Notepad++.Notepad++' = 'notepadplusplus'
+                'Google.Chrome'       = 'googlechrome'
+                # dopisuj według potrzeb, np. '7zip.7zip' = '7zip'
+              }
+
+              $toInstall = foreach ($p in $Packages) { if ($map.ContainsKey($p)) { $map[$p] } }
+              if ($toInstall.Count -gt 0) {
+                Write-Host "Chocolatey: installing $($toInstall -join ', ')"
+                choco install -y @toInstall
+              } else {
+                Write-Warning "Brak mapowania Chocolatey dla przekazanych pakietów."
+              }
+            }
+
+            Write-Host "Deployment zakończony."
+          }
+
+          Invoke-Command -ComputerName $env:WIN_HOST `
+                         -Credential $cred `
+                         -Authentication Negotiate `
+                         -UseSSL:$false `
+                         -SessionOption $opt `
+                         -ScriptBlock $script `
+                         -ArgumentList (, $apps)
