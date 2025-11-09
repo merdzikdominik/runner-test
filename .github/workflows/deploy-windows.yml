@@ -20,37 +20,30 @@ jobs:
       - name: check TCP connectivity
         shell: powershell
         run: |
-          $ip = "${{ secrets.WIN_HOST }}"
-          $t = Test-NetConnection -ComputerName $ip -Port 5985
-          $t | Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
-          if (-not $t.TcpTestSucceeded) { throw "Brak łączności do $ip:5985" }
-
-      - name: Deploy na VM przez WinRM (winget -> choco fallback)
-        shell: powershell
-        env:
-          WIN_HOST: ${{ secrets.WIN_HOST }}
-          WIN_USER: ${{ secrets.WIN_USER }}
-          WIN_PASS: ${{ secrets.WIN_PASS }}
-          INPUT_APPS: ${{ github.event.inputs.apps }}
-        run: |
           $sec  = ConvertTo-SecureString $env:WIN_PASS -AsPlainText -Force
           $cred = New-Object System.Management.Automation.PSCredential ($env:WIN_USER, $sec)
           $opt  = New-PSSessionOption -SkipCACheck -SkipCNCheck -OperationTimeout 180000
-
-          # listę aplikacji bierzemy z inputs (CSV) albo domyślną
+      
+          # lista aplikacji z inputs (CSV) albo domyślnie
           $apps = if ([string]::IsNullOrWhiteSpace($env:INPUT_APPS)) {
             @('Notepad++.Notepad++','Google.Chrome')
           } else {
             $env:INPUT_APPS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
           }
-
-          $script = {
+      
+          Invoke-Command -ComputerName $env:WIN_HOST `
+                         -Credential $cred `
+                         -Authentication Negotiate `
+                         -UseSSL:$false `
+                         -SessionOption $opt `
+                         -ArgumentList (, $apps) `
+                         -ScriptBlock {
             param([string[]]$Packages)
-
+      
             $ErrorActionPreference = 'Stop'
-
+      
             function Has-Winget { Get-Command winget -ErrorAction SilentlyContinue }
-
+      
             function Install-WithWinget([string[]]$Pkgs) {
               foreach ($p in $Pkgs) {
                 Write-Host "Winget: installing $p"
@@ -58,7 +51,7 @@ jobs:
                   --accept-source-agreements --accept-package-agreements --disable-interactivity
               }
             }
-
+      
             if (Has-Winget) {
               Write-Host "Winget wykryty – instaluję paczki..."
               Install-WithWinget -Pkgs $Packages
@@ -70,14 +63,16 @@ jobs:
                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
                 iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
               }
-
-              # Mapowanie popularnych winget-ID -> nazwy choco
+      
+              # Mapowanie winget -> choco
               $map = @{
                 'Notepad++.Notepad++' = 'notepadplusplus'
                 'Google.Chrome'       = 'googlechrome'
-                # dopisuj według potrzeb, np. '7zip.7zip' = '7zip'
+                # '7zip.7zip'         = '7zip'
+                # 'Git.Git'           = 'git'
+                # 'Microsoft.VisualStudioCode' = 'vscode'
               }
-
+      
               $toInstall = foreach ($p in $Packages) { if ($map.ContainsKey($p)) { $map[$p] } }
               if ($toInstall.Count -gt 0) {
                 Write-Host "Chocolatey: installing $($toInstall -join ', ')"
@@ -86,15 +81,6 @@ jobs:
                 Write-Warning "Brak mapowania Chocolatey dla przekazanych pakietów."
               }
             }
-
+      
             Write-Host "Deployment zakończony."
           }
-
-          Invoke-Command -ComputerName $env:WIN_HOST `
-                         -Credential $cred `
-                         -Authentication Negotiate `
-                         -UseSSL:$false `
-                         -SessionOption $opt `
-                         -ScriptBlock $script `
-                         -ArgumentList (, $apps)
-
