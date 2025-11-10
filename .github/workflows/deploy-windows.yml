@@ -1,114 +1,49 @@
-name: Deploy Windows apps — WinRM (PowerShell 5)
+name: Deploy Windows apps with Ansible (Windows runner + Docker CLI)
 
 on:
   workflow_dispatch:
-    inputs:
-      apps:
-        description: "Winget IDs (comma-separated)"
-        required: false
-        default: "Notepad++.Notepad++,Google.Chrome"
 
 jobs:
   deploy:
+    # Twój self-hosted runner na Windowsie (w tej samej sieci co VM)
     runs-on: [self-hosted, windows]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check secrets
+      - name: Diag winrm check
         shell: powershell
         run: |
-          Write-Host "host: ${{ secrets.WIN_HOST }}"
-          Write-Host "user: ${{ secrets.WIN_USER }}"
-          Write-Host "pass: ${{ secrets.WIN_PASS }}"
-          Write-Host "apps: ${{ github.event.inputs.apps }}"
-
-      - name: Check TCP to WinRM (5985)
-        shell: powershell
-        run: |
-          $ip = "${{ secrets.WIN_HOST }}"
+          $ip = (Get-Content ansible/inventory.ini | Select-String -Pattern 'ansible_host=').ToString().Split('=')[-1].Trim()
           $t = Test-NetConnection -ComputerName $ip -Port 5985
           $t | Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
           if (-not $t.TcpTestSucceeded) { throw "No TCP to $ip:5985" }
 
-      - name: Deploy over WinRM
+      - name: Ansible in Linux container (Docker CLI)
         shell: powershell
         env:
-          WIN_HOST: ${{ secrets.WIN_HOST }}
-          WIN_USER: ${{ secrets.WIN_USER }}
           WIN_PASS: ${{ secrets.WIN_PASS }}
-          INPUT_APPS: ${{ github.event.inputs.apps }}
         run: |
-          # Creds i opcje sesji
-          $sec  = ConvertTo-SecureString $env:WIN_PASS -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential ($env:WIN_USER, $sec)
-          $opt  = New-PSSessionOption -SkipCACheck -SkipCNCheck -OperationTimeout 180000
-      
-          # Lista paczek
-          if ([string]::IsNullOrWhiteSpace($env:INPUT_APPS)) {
-            $apps = @('Notepad++.Notepad++','Google.Chrome')
-          } else {
-            $apps = $env:INPUT_APPS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-          }
-      
-          # Treść skryptu jako tablica linii (bez here-stringa) -> jeden string
-          $scriptText = @(
-            "param([string[]]`$Packages)"
-            ""
-            "`$ErrorActionPreference = 'Stop'"
-            ""
-            "function HasWinget { `$null -ne (Get-Command winget -ErrorAction SilentlyContinue) }"
-            ""
-            "function InstallWithWinget([string[]]`$Pkgs) {"
-            "  foreach (`$p in `$Pkgs) {"
-            "    Write-Host 'winget: installing ' + `$p"
-            "    winget install --id `$p --silent --accept-source-agreements --accept-package-agreements --disable-interactivity"
-            "  }"
-            "}"
-            ""
-            "if (HasWinget) {"
-            "  Write-Host 'winget detected - installing packages'"
-            "  InstallWithWinget -Pkgs `$Packages"
-            "} else {"
-            "  Write-Warning 'winget not found - switching to Chocolatey'"
-            "  if (-not (Test-Path `$env:ProgramData\chocolatey\choco.exe)) {"
-            "    Write-Host 'installing Chocolatey'"
-            "    Set-ExecutionPolicy Bypass -Scope Process -Force"
-            "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12"
-            "    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
-            "  }"
-            "  `$map = @{"
-            "    'Notepad++.Notepad++' = 'notepadplusplus'"
-            "    'Google.Chrome'       = 'googlechrome'"
-            "    '7zip.7zip'           = '7zip'"
-            "    'Git.Git'             = 'git'"
-            "    'Microsoft.VisualStudioCode' = 'vscode'"
-            "  }"
-            "  `$toInstall = foreach (`$p in `$Packages) { if (`$map.ContainsKey(`$p)) { `$map[`$p] } }"
-            "  if (`$toInstall.Count -gt 0) {"
-            "    Write-Host ('choco: installing ' + (`$toInstall -join ', '))"
-            "    choco install -y @`$toInstall"
-            "  } else {"
-            "    Write-Warning 'no choco mapping for provided packages'"
-            "  }"
-            "}"
-            ""
-            "Write-Host 'deployment finished'"
-          ) -join "`r`n"
-      
-          # Splatting zamiast backticków
-          $invokeParams = @{
-            ComputerName = $env:WIN_HOST
-            Credential   = $cred
-            Authentication = 'Negotiate'
-            UseSSL       = $false
-            SessionOption= $opt
-            ScriptBlock  = [scriptblock]::Create($scriptText)
-            ArgumentList = , $apps   # przecinek = przekaż tablicę jako jeden parametr
-          }
-      
-          Invoke-Command @invokeParams
+          $bash = @'
+          set -e
+          cd /work/ansible
+          
+          if [ -f requirements.yml ]; then
+            ansible-galaxy collection install -r requirements.yml
+          fi
+          
+          # Dry ping
+          ansible -i inventory.ini win -m ansible.windows.win_ping -v -e win_pass="${{ secrets.WIN_PASS }}"
+          
+          # Właściwy deploy (winget)
+          ansible-playbook -i inventory.ini site.yml -v -e win_pass="${{ secrets.WIN_PASS }}"
+          '@
 
-
-
+          # Uruchom kontener z mapowaniem repo
+          docker run --rm `
+            -e WIN_PASS="$env:WIN_PASS" `
+            -v "${{ github.workspace }}:/work" `
+            -w "/work" `
+            ghcr.io/coderanger/ansible:latest `
+            bash -lc "$bash"
