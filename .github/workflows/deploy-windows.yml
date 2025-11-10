@@ -20,30 +20,33 @@ jobs:
           $t | Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
           if (-not $t.TcpTestSucceeded) { throw "No TCP to $ip:5985" }
 
-      - name: Ansible in Linux container (Docker CLI)
+      - name: Run Ansible inside Linux container (Docker CLI)
         shell: powershell
         env:
-          WIN_PASS: ${{ secrets.WIN_PASS }}
+          WIN_PASS: ${{ secrets.WIN_PASS }}   # <-- tu trzymasz hasło
         run: |
           $bash = @'
           set -e
           cd /work/ansible
           
+          # 1) Kolekcje
           if [ -f requirements.yml ]; then
             ansible-galaxy collection install -r requirements.yml
           fi
           
-          # Dry ping
-          ansible -i inventory.ini win -m ansible.windows.win_ping -v -e win_pass="${{ secrets.WIN_PASS }}"
+          # 2) Extra vars z secreta -> plik (nie pokaże hasła w logu)
+          printf "win_pass: %s\n" "${WIN_PASS}" > extra-vars.yml
           
-          # Właściwy deploy (winget)
-          ansible-playbook -i inventory.ini site.yml -v -e win_pass="${{ secrets.WIN_PASS }}"
+          # 3) Szybki ping WinRM (pywinrm/NTLM)
+          ansible -i inventory.ini win -m ansible.windows.win_ping -v -e @extra-vars.yml
+          
+          # 4) Właściwy deploy
+          ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
           '@
-
-          # Uruchom kontener z mapowaniem repo
           docker run --rm `
             -e WIN_PASS="$env:WIN_PASS" `
             -v "${{ github.workspace }}:/work" `
             -w "/work" `
             ghcr.io/coderanger/ansible:latest `
             bash -lc "$bash"
+
