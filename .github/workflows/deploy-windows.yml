@@ -24,6 +24,15 @@ jobs:
           Write-Host "pass: ${{ secrets.WIN_PASS }}"
           Write-Host "apps: ${{ github.event.inputs.apps }}"
 
+      - name: check fix for Negotiate issue
+        shell: powershell
+        run: |
+          Set-Item WSMan:\localhost\Client\TrustedHosts -Value "${{ secrets.WIN_HOST }}" -Force
+          
+          winrm get winrm/config/client
+          
+          Test-WSMan ${{ secrets.WIN_HOST }}
+
       - name: Check TCP to WinRM (5985)
         shell: powershell
         run: |
@@ -109,4 +118,5 @@ jobs:
           }
       
           Invoke-Command @invokeParams
+
 
