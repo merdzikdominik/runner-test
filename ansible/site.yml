@@ -5,7 +5,7 @@
   pre_tasks:
     - name: Sprawdź czy win_pass jest zdefiniowane (bez ujawniania wartości)
       ansible.builtin.debug:
-        msg: "win_pass defined: {{ win_pass is defined }}"
+        msg: "win_pass defined: {{ win_pass }}"
         
     - name: Upewnij się, że WinGet jest dostępny
       community.windows.win_winget:
@@ -30,4 +30,5 @@
       community.windows.win_winget:
         id: Google.Chrome
         state: present
+
 
