@@ -16,8 +16,8 @@ jobs:
         uses: Vampire/setup-wsl@v6.0.0
         with:
           wsl-version: 1
-          distribution: Ubuntu-22.04 
-          update: 'false'
+#          distribution: Ubuntu-22.04 
+#          update: 'false'
 
       - uses: actions/checkout@v4
 
@@ -52,4 +52,5 @@ jobs:
           export PATH=$HOME/.local/bin:$PATH
           cd ansible
           ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
+
 
