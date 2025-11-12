@@ -37,7 +37,7 @@ jobs:
       - name: Create extra-vars (win_pass)
         shell: powershell
         env:
-          WIN_PASS: ${{ secrets.WIN_PASS }}
+          WIN_PASS: ${{ secrets.WIN_PASS2 }}
         run: |
           wsl -e bash -lc "
             set -e
@@ -65,4 +65,5 @@ jobs:
             cd '$env:WSL_WORKDIR/ansible'
             ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
           "
+
 
