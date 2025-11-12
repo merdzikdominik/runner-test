@@ -5,7 +5,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, Windows]   # Twój runner-VM z WSL
+    runs-on: [self-hosted, Windows]
 
     steps:
       - uses: actions/checkout@v4
@@ -20,50 +20,26 @@ jobs:
           "WSL_WORKDIR=$wsl" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "WSL_WORKDIR=$wsl"
 
-      - name: Install Ansible + pywinrm in WSL and collections
-        shell: powershell
-        run: |
-          wsl -e bash -lc "
-            set -e
-            sudo apt-get update
-            sudo apt-get install -y python3-pip
-            python3 -m pip install --user 'ansible-core==2.13.*' 'pywinrm>=0.4.3' 'pywinrm[credssp]'
-            export PATH=\$HOME/.local/bin:\$PATH
-            if [ -f '$env:WSL_WORKDIR/ansible/requirements.yml' ]; then
-              ansible-galaxy collection install -r '$env:WSL_WORKDIR/ansible/requirements.yml'
-            fi
-          "
-
       - name: Create extra-vars (win_pass)
-        shell: powershell
+        shell: wsl-bash_Ubuntu-20.04 {0}
         env:
           WIN_PASS: ${{ secrets.WIN_PASS2 }}
         run: |
-          wsl -e bash -lc "
-            set -e
-            cd '$env:WSL_WORKDIR/ansible'
-            umask 077
-            printf 'win_pass: %s\n' '${WIN_PASS}' > extra-vars.yml
-          "
+          cd '$env:WSL_WORKDIR/ansible'
+          umask 077
+          printf 'win_pass: %s\n' '${WIN_PASS}' > extra-vars.yml
 
       - name: WinRM ping (ansible.windows.win_ping)
-        shell: powershell
+        shell: wsl-bash_Ubuntu-20.04 {0}
         run: |
-          wsl -e bash -lc "
-            set -e
-            export PATH=\$HOME/.local/bin:\$PATH
-            cd '$env:WSL_WORKDIR/ansible'
-            ansible -i inventory.ini win -m ansible.windows.win_ping -v -e @extra-vars.yml
-          "
+          set -e
+          export PATH=\$HOME/.local/bin:\$PATH
+          cd '$env:WSL_WORKDIR/ansible'
+          ansible -i inventory.ini win -m ansible.windows.win_ping -v -e @extra-vars.yml
 
       - name: Run playbook (site.yml)
-        shell: powershell
+        shell: wsl-bash_Ubuntu-20.04 {0}
         run: |
-          wsl -e bash -lc "
-            set -e
-            export PATH=\$HOME/.local/bin:\$PATH
-            cd '$env:WSL_WORKDIR/ansible'
-            ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
-          "
-
-
+          export PATH=\$HOME/.local/bin:\$PATH
+          cd '$env:WSL_WORKDIR/ansible'
+          ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
