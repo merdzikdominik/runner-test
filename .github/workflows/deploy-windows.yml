@@ -1,52 +1,68 @@
-name: Deploy Windows apps with Ansible (Windows runner + Docker CLI)
+name: Deploy Windows apps with Ansible (Windows runner + WSL)
 
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    # Twój self-hosted runner na Windowsie (w tej samej sieci co VM)
-    runs-on: [self-hosted, windows]
+    runs-on: [self-hosted, Windows]   # Twój runner-VM z WSL
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Diag winrm check
+      - name: Compute WSL workdir
         shell: powershell
         run: |
-          $ip = (Get-Content ansible/inventory.ini | Select-String -Pattern 'ansible_host=').ToString().Split('=')[-1].Trim()
-          $t = Test-NetConnection -ComputerName $ip -Port 5985
-          $t | Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded
-          if (-not $t.TcpTestSucceeded) { throw "No TCP to $ip:5985" }
+          $p = $env:GITHUB_WORKSPACE
+          $drive = $p.Substring(0,1).ToLower()
+          $rest  = $p.Substring(2).Replace('\','/')
+          $wsl   = "/mnt/$drive/$rest"
+          "WSL_WORKDIR=$wsl" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "WSL_WORKDIR=$wsl"
 
-      - name: Run Ansible inside Linux container (Docker CLI)
+      - name: Install Ansible + pywinrm in WSL and collections
+        shell: powershell
+        run: |
+          wsl -e bash -lc "
+            set -e
+            sudo apt-get update
+            sudo apt-get install -y python3-pip
+            python3 -m pip install --user 'ansible-core==2.13.*' 'pywinrm>=0.4.3' 'pywinrm[credssp]'
+            export PATH=\$HOME/.local/bin:\$PATH
+            if [ -f '$env:WSL_WORKDIR/ansible/requirements.yml' ]; then
+              ansible-galaxy collection install -r '$env:WSL_WORKDIR/ansible/requirements.yml'
+            fi
+          "
+
+      - name: Create extra-vars (win_pass)
         shell: powershell
         env:
-          WIN_PASS: ${{ secrets.WIN_PASS }}   # <-- tu trzymasz hasło
+          WIN_PASS: ${{ secrets.WIN_PASS }}
         run: |
-          $bash = @'
-          set -e
-          cd /work/ansible
-          
-          # 1) Kolekcje
-          if [ -f requirements.yml ]; then
-            ansible-galaxy collection install -r requirements.yml
-          fi
-          
-          # 2) Extra vars z secreta -> plik (nie pokaże hasła w logu)
-          printf "win_pass: %s\n" "${WIN_PASS}" > extra-vars.yml
-          
-          # 3) Szybki ping WinRM (pywinrm/NTLM)
-          ansible -i inventory.ini win -m ansible.windows.win_ping -v -e @extra-vars.yml
-          
-          # 4) Właściwy deploy
-          ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
-          '@
-          docker run --rm `
-            -e WIN_PASS="$env:WIN_PASS" `
-            -v "${{ github.workspace }}:/work" `
-            -w "/work" `
-            ghcr.io/coderanger/ansible:latest `
-            bash -lc "$bash"
+          wsl -e bash -lc "
+            set -e
+            cd '$env:WSL_WORKDIR/ansible'
+            umask 077
+            printf 'win_pass: %s\n' '${WIN_PASS}' > extra-vars.yml
+          "
+
+      - name: WinRM ping (ansible.windows.win_ping)
+        shell: powershell
+        run: |
+          wsl -e bash -lc "
+            set -e
+            export PATH=\$HOME/.local/bin:\$PATH
+            cd '$env:WSL_WORKDIR/ansible'
+            ansible -i inventory.ini win -m ansible.windows.win_ping -v -e @extra-vars.yml
+          "
+
+      - name: Run playbook (site.yml)
+        shell: powershell
+        run: |
+          wsl -e bash -lc "
+            set -e
+            export PATH=\$HOME/.local/bin:\$PATH
+            cd '$env:WSL_WORKDIR/ansible'
+            ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
+          "
 
