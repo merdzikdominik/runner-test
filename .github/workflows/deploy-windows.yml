@@ -8,6 +8,9 @@ jobs:
     runs-on: [self-hosted, Windows]
 
     steps:
+      - name: Setup WSL
+        uses: Vampire/setup-wsl@v6.0.0
+    
       - uses: actions/checkout@v4
 
       - name: Compute WSL workdir
@@ -19,6 +22,12 @@ jobs:
           $wsl   = "/mnt/$drive/$rest"
           "WSL_WORKDIR=$wsl" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "WSL_WORKDIR=$wsl"
+
+          Write-Host "p variable value: $($p)"
+          Write-Host "drive variable value: $($drive)"
+          Write-Host "rest variable value: $($rest)"
+          Write-Host "wsl variable value: $($wsl)"
+          
 
       - name: Create extra-vars (win_pass)
         shell: wsl-bash_Ubuntu-20.04 {0}
@@ -43,3 +52,4 @@ jobs:
           export PATH=\$HOME/.local/bin:\$PATH
           cd '$env:WSL_WORKDIR/ansible'
           ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
+
