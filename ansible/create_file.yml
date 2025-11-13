@@ -1,0 +1,29 @@
+- name: create text file on windows host
+  hosts: win
+  gather_facts: no
+
+  vars:
+    target_dir:  'C:\Temp'
+    target_file: 'C:\Temp\hello.txt'
+    file_content: |
+      file created
+      Data: chuj wie jaka
+
+  pre_tasks:
+    - name: validation – win_pass needs to be defined (if used in inventory)
+      ansible.builtin.assert:
+        that:
+          - win_pass is defined
+          - win_pass | length > 0
+        fail_msg: "No win_pass – provide through -e or extra-vars file"
+
+  tasks:
+    - name: check if file exists
+      ansible.windows.win_file:
+        path: "{{ target_dir }}"
+        state: directory
+
+    - name: create file with content
+      ansible.windows.win_copy:
+        content: "{{ file_content }}"
+        dest: "{{ target_file }}"
