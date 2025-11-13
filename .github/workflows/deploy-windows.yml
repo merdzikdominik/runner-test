@@ -66,9 +66,10 @@ jobs:
           set -e
           export PATH=$HOME/.local/bin:$PATH
           cd ansible
-          ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
+          ansible-playbook -i inventory.ini create_file.yml -v -e @extra-vars.yml
 
       - name: Cleanup extra-vars
         if: always()
         run: |
           rm -f ansible/extra-vars.yml
+
