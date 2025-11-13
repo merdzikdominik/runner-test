@@ -29,20 +29,27 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y ansible
           fi
-
-      - name: Create extra-vars (win_pass) in WSL
+          
+      - name: Create extra-vars (cmd on Windows)
+        shell: cmd
         env:
           WIN_PASS: ${{ secrets.WIN_PASS2 }}
         run: |
-          set -eu
-          cd ansible
-          # jeśli zmienna nie doszła do WSL, to tu wylecimy:
-          if [ -z "${WIN_PASS-}" ]; then
-            echo "WIN_PASS missing in WSL env" >&2
-            exit 1
-          fi
-          umask 077
-          printf 'win_pass: %s\n' "${WIN_PASS-}" > extra-vars.yml
+          if "%WIN_PASS%"=="" ( echo Missing WIN_PASS & exit /b 1 )
+          echo win_pass: "%WIN_PASS%" > ansible\extra-vars.yml
+#      - name: Create extra-vars (win_pass) in WSL
+#        env:
+#          WIN_PASS: ${{ secrets.WIN_PASS2 }}
+#        run: |
+#          set -eu
+#          cd ansible
+#          # jeśli zmienna nie doszła do WSL, to tu wylecimy:
+#          if [ -z "${WIN_PASS-}" ]; then
+#            echo "WIN_PASS missing in WSL env" >&2
+#            exit 1
+#          fi
+#          umask 077
+#          printf 'win_pass: %s\n' "${WIN_PASS-}" > extra-vars.yml
 
       - name: WinRM ping (ansible.windows.win_ping)
         env:
@@ -50,7 +57,6 @@ jobs:
         run: |
           set -eu
           cd ansible
-          [ -s extra-vars.yml ] || { echo "extra-vars.yml missing" >&2; exit 1; }
           ansible -i inventory.ini win -m ansible.windows.win_ping -v -e @extra-vars.yml
 
       - name: Run playbook (site.yml)
@@ -59,6 +65,7 @@ jobs:
           export PATH=$HOME/.local/bin:$PATH
           cd ansible
           ansible-playbook -i inventory.ini site.yml -v -e @extra-vars.yml
+
 
 
 
